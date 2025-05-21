@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MQTT Dashboard</title>
+
+    <!-- استفاده از نسخه CDN مطمئن -->
+    <script src="https://unpkg.com/paho-mqtt/mqttws31.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            background-color: #bbb8b8;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .circle {
+            width: 100px;
+            height: 100px;
+            background-color: red;
+            border-radius: 50%;
+            margin: 20px auto;
+            text-align: center;
+            line-height: 100px;
+            font-size: 20px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+        }
+
+        .box {
+            flex: 1;
+            min-width: 300px;
+            padding: 10px;
+        }
+
+        #log {
+            height: 200px;
+            overflow-y: auto;
+            background: #ffffff;
+            padding: 10px;
+            border: 1px solid #ccc;
+            font-family: monospace;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>MQTT Dashboard (Secure)</h1>
+    <div class="circle" id="buttonCircle">OFF</div>
+    <div class="circle" id="ledCircle">0</div>
+
+    <div class="container">
+        <div class="box">
+            <h3>Status & Data</h3>
+            <p>Status: <span id="status">Disconnected</span></p>
+            <p>Sensor Data: <span id="SensorDataClever">-</span></p>
+            <h3>Button Log</h3>
+            <div id="log"></div>
+        </div>
+        <div class="box">
+            <h3>Sensor Chart</h3>
+            <canvas id="sensorChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const hostname = "broker.hivemq.com";
+        const port = 8884;
+        const buttonTopic = "Button1StateMostafa";
+        const sensorTopic = "SensorDataClever";
+        const ledTopic = "LEDroshankon";
+
+        const client = new Paho.MQTT.Client(hostname, Number(port), "clientId-" + Math.random());
+
+        client.onConnectionLost = function (responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.log("Connection lost: " + responseObject.errorMessage);
+            }
+            setTimeout(connectMQTT, 5000);
+        };
+
+        client.onMessageArrived = function (message) {
+            const topic = message.destinationName;
+            const payload = message.payloadString;
+
+            if (topic === buttonTopic) {
+                handleButtonStateChange(payload);
+            } else if (topic === sensorTopic) {
+                handleSensorData(payload);
+            }
+        };
+
+        function connectMQTT() {
+            client.connect({
+                useSSL: true,
+                keepAliveInterval: 60,
+                onSuccess: function () {
+                    console.log("Connected securely");
+                    document.getElementById("status").textContent = "Connected";
+                    [buttonTopic, sensorTopic].forEach(topic => client.subscribe(topic));
+                },
+                onFailure: function (error) {
+                    console.error("Connection failed: " + error.errorMessage);
+                    document.getElementById("status").textContent = "Disconnected";
+                    setTimeout(connectMQTT, 5000);
+                }
+            });
+        }
+
+        function handleButtonStateChange(state) {
+            const buttonCircle = document.getElementById("buttonCircle");
+            const isOn = state === "1";
+            buttonCircle.textContent = isOn ? "ON" : "OFF";
+            buttonCircle.style.backgroundColor = isOn ? "green" : "red";
+            logButtonEvent(`Button1 changed to ${isOn ? "ON (1)" : "OFF (0)"}`);
+        }
+
+        function handleSensorData(data) {
+            document.getElementById("SensorDataClever").textContent = data;
+            updateSensorChart(data);
+        }
+
+        function logButtonEvent(text) {
+            const logBox = document.getElementById("log");
+            const now = new Date();
+            const timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+            const line = `[${timestamp}] ${text}`;
+            logBox.innerHTML += line + "<br/>";
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        let ledState = 0;
+        document.getElementById("ledCircle").addEventListener("click", function () {
+            ledState = ledState === 0 ? 1 : 0;
+            this.textContent = ledState;
+            this.style.backgroundColor = ledState === 1 ? "green" : "red";
+            sendMQTTMessage(ledTopic, String(ledState));
+        });
+
+        function sendMQTTMessage(topic, message) {
+            if (client.isConnected()) {
+                let mqttMessage = new Paho.MQTT.Message(message);
+                mqttMessage.destinationName = topic;
+                client.send(mqttMessage);
+            } else {
+                console.warn("MQTT not connected, cannot send message");
+            }
+        }
+
+        const ctx = document.getElementById('sensorChart').getContext('2d');
+        const sensorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Sensor Data',
+                    data: [],
+                    borderColor: 'blue',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
+                        ticks: { autoSkip: true, maxTicksLimit: 10 }
+                    },
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        function updateSensorChart(value) {
+            const now = new Date();
+            const timestamp = now.toLocaleTimeString();
+            const val = parseFloat(value);
+
+            sensorChart.data.labels.push(timestamp);
+            sensorChart.data.datasets[0].data.push(val);
+
+            if (sensorChart.data.labels.length > 20) {
+                sensorChart.data.labels.shift();
+                sensorChart.data.datasets[0].data.shift();
+            }
+
+            sensorChart.update();
+        }
+
+        connectMQTT();
+    </script>
+</body>
+
+</html>
